@@ -11,7 +11,6 @@ import comfy.utils
 from contextlib import nullcontext
 from .lvdm.models.samplers.ddim import DDIMSampler
 from .lvdm.modules.networks.openaimodel3d import ControlNet
-from .utils.enhanced_clip_vision import encode_image_masked
 
 from contextlib import nullcontext
 try:
@@ -557,9 +556,8 @@ class DynamiCrafterI2V:
             self.model.image_proj_model.to(device)
             text_emb = positive[0][0].to(device)
 
-            #cond_images = clip_vision.encode_image(image.permute(0, 2, 3, 1))['last_hidden_state'].to(device)
-            cond_images = encode_image_masked(clip_vision, image.permute(0, 2, 3, 1), batch_size=0, tiles=4, ratio=0.1).last_hidden_state.to(device)
-            #cond_images = torch.sum(cond_images, dim=0).unsqueeze(0)
+            cond_images = clip_vision.encode_image(image.permute(0, 2, 3, 1))['last_hidden_state'].to(device)
+            cond_images = torch.sum(cond_images, dim=0).unsqueeze(0)
             cond_images = torch.mean(cond_images, dim=0).unsqueeze(0)
 
             img_emb = self.model.image_proj_model(cond_images)
@@ -863,16 +861,11 @@ class ToonCrafterInterpolation:
 
                 text_emb = positive[0][0].to(device)
                 
-                #cond_images = clip_vision.encode_image(image.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
-                #cond_images2 = clip_vision.encode_image(image2.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
-
                 self.model.image_proj_model.to(device)
-                cond_images = encode_image_masked(clip_vision, image.permute(0, 2, 3, 1), batch_size=0, tiles=4, ratio=1).last_hidden_state.to(device)
-                cond_images = torch.sum(cond_images, dim=0).unsqueeze(0)
+                cond_images = clip_vision.encode_image(image.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
                 img_emb = self.model.image_proj_model(cond_images)
                 if len(images) !=1:
-                    cond_images2 = encode_image_masked(clip_vision, image2.permute(0, 2, 3, 1), batch_size=0, tiles=4, ratio=1).last_hidden_state.to(device)
-                    cond_images2 = torch.sum(cond_images2, dim=0).unsqueeze(0)
+                    cond_images2 = clip_vision.encode_image(image2.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
                     img_emb2 = self.model.image_proj_model(cond_images2)
                     img_embeds = img_emb * image_embed_ratio + img_emb2 * (1.0 - image_embed_ratio)
                 else:
