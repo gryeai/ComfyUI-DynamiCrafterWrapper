@@ -557,6 +557,8 @@ class DynamiCrafterI2V:
             text_emb = positive[0][0].to(device)
 
             cond_images = clip_vision.encode_image(image.permute(0, 2, 3, 1))['last_hidden_state'].to(device)
+            cond_images = torch.sum(cond_images, dim=0).unsqueeze(0)
+            cond_images = torch.mean(cond_images, dim=0).unsqueeze(0)
 
             img_emb = self.model.image_proj_model(cond_images)
 
@@ -814,11 +816,12 @@ class ToonCrafterInterpolation:
         pbar = comfy.utils.ProgressBar(len(images) - 1)
         autocast_condition = (dtype != torch.float32) and not comfy.model_management.is_device_mps(device)
         with torch.autocast(comfy.model_management.get_autocast_device(device), dtype=dtype) if autocast_condition else nullcontext():
-            for i in range(len(images) - 1):
+            for i in range(len(images) - 1) if len(images) > 1 else range(len(images)):
                 videos, videos2 = None, None
                 mm.soft_empty_cache()
                 image = images[i].unsqueeze(0)
-                image2 = images[i+1].unsqueeze(0)
+                if len(images) !=1:
+                    image2 = images[i+1].unsqueeze(0)
                 
                 B, C, H, W = image.shape
                 noise_shape = [B, self.model.model.diffusion_model.out_channels, frames, H // 8, W // 8]
@@ -830,12 +833,16 @@ class ToonCrafterInterpolation:
                     image2 += torch.randn_like(image) * augmentation_level
 
                 encode_pixels = image.unsqueeze(2) * 2 - 1
-                videos = encode_pixels # bc1hw
-                videos = repeat(videos, 'b c t h w -> b c (repeat t) h w', repeat=frames//2)
-                encode_pixels = image2.unsqueeze(2) * 2 - 1
-                videos2 = encode_pixels # bc1hw
-                videos2 = repeat(videos2, 'b c t h w -> b c (repeat t) h w', repeat=frames//2)
-                videos = torch.cat([videos, videos2], dim=2)                              
+                videos = encode_pixels  # bc1hw
+                videos = repeat(videos, 'b c t h w -> b c (repeat t) h w', repeat=frames // 2)
+
+                if len(images) == 1:
+                    videos = torch.cat([videos, videos], dim=2)
+                else:
+                    encode_pixels = image2.unsqueeze(2) * 2 - 1
+                    videos2 = encode_pixels  # bc1hw
+                    videos2 = repeat(videos2, 'b c t h w -> b c (repeat t) h w', repeat=frames // 2)
+                    videos = torch.cat([videos, videos2], dim=2)                          
 
                 try:
                     z, hs = get_latent_z_with_hidden_states(self.model, videos)
@@ -847,23 +854,25 @@ class ToonCrafterInterpolation:
 
                 img_tensor_repeat = torch.zeros_like(z)
                 img_tensor_repeat[:,:,:1,:,:] = z[:,:,:1,:,:]
-                img_tensor_repeat[:,:,-1:,:,:] = z[:,:,-1:,:,:]
+                if len(images) !=1:
+                    img_tensor_repeat[:,:,-1:,:,:] = z[:,:,-1:,:,:]
 
                 self.model.first_stage_model.to(offload_device)
 
                 text_emb = positive[0][0].to(device)
                 
-                cond_images = clip_vision.encode_image(image.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
-                cond_images2 = clip_vision.encode_image(image2.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
-
                 self.model.image_proj_model.to(device)
-
+                cond_images = clip_vision.encode_image(image.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
                 img_emb = self.model.image_proj_model(cond_images)
-                img_emb2 = self.model.image_proj_model(cond_images2)
-                img_embeds = img_emb * image_embed_ratio + img_emb2 * (1.0 - image_embed_ratio)
+                if len(images) !=1:
+                    cond_images2 = clip_vision.encode_image(image2.permute(0, 2, 3, 1))["last_hidden_state"].to(device)
+                    img_emb2 = self.model.image_proj_model(cond_images2)
+                    img_embeds = img_emb * image_embed_ratio + img_emb2 * (1.0 - image_embed_ratio)
+                else:
+                    img_embeds = img_emb
 
                 imtext_cond = torch.cat([text_emb, img_embeds], dim=1)
-                del cond_images, img_emb, img_emb2, text_emb
+                del cond_images, img_emb, text_emb
 
                 if comfy.model_management.is_device_mps(device):
                     fs = torch.tensor([fs], dtype=torch.float32, device=self.model.device)
